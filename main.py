@@ -158,7 +158,7 @@ class JpegFile:
 
         tag_types = {
             1: 'B',  # BYTE
-            2: 'c',  # ASCII
+            2: 's',  # ASCII
             3: 'H',  # SHORT
             4: 'L',  # LONG
             5: '2L',  # RATIONAL (Two LONGs; first is the numerator, second is the denominator)
@@ -166,6 +166,20 @@ class JpegFile:
             9: 'l',  # SLONG
             10: '2l',  # SRATIONAL (Two SLONGs; first is the numerator, second is the denominator)
         }
+
+        def _get_byte_count(tag_type, count):
+            """ Return the number of bytes for a given tag. """
+            if tag_type in ['B', 's']:
+                tag_bytes = 1
+            elif tag_type in ['H']:
+                tag_bytes = 2
+            elif tag_type in ['L', 'l']:
+                tag_bytes = 4
+            elif tag_type in ['2L', '2l']:
+                tag_bytes = 8
+            else:
+                raise RuntimeError(f"Unsupported tag type: {tag_type}")
+            return tag_bytes * count
 
         with ReadSegment(file):
             file.seek(8, os.SEEK_CUR)
@@ -199,11 +213,44 @@ class JpegFile:
                 type_id = struct.unpack(f'{endian}H', file.read(2))[0]
                 count = struct.unpack(f'{endian}L', file.read(4))[0]
 
+                if tag_id == 0x8769:
+                    # EXIF IFD Pointer
+                    # Todo: figure out what to do with this. Skip for now.
+                    file.seek(4)
+                    continue
+
                 tag_name = tag_names.get(tag_id)
                 tag_type = tag_types.get(type_id)
-                print(tag_name, tag_type)
-                file.seek(4, os.SEEK_CUR)  # skips over value/offset. todo: actually get this data
-                # value = struct.unpack(f'{endian}{tag_type}', file.read(count))
+                total_bytes = _get_byte_count(tag_type, count)
+                if tag_type == 's':
+                    tag_type = f'{count}s'
+
+                if total_bytes <= 4:
+                    # When total bytes is 4 or less, next 4 bytes stores the value.
+                    value = struct.unpack(f'{endian}{tag_type}', file.read(total_bytes))
+                    file.seek(4-total_bytes, os.SEEK_CUR)  # Handle padding
+                else:
+                    # When total bytes is greater than 4, the next 4 bytes stores the offset to the value.
+                    value_offset = struct.unpack(f'{endian}I', file.read(4))[0]
+                    current_offset = file.tell()
+                    file.seek(tiff_header_offset+value_offset, os.SEEK_SET)
+                    value = struct.unpack(f'{endian}{tag_type}', file.read(total_bytes))
+                    file.seek(current_offset, os.SEEK_SET)
+
+                if len(value) == 1:
+                    value = value[0]
+                elif len(value) == 2:
+                    value = value[0] / value[1]
+
+                if tag_type.endswith('s'):
+                    value = value.decode('utf-8')
+
+                self._metadata.update({tag_name: value})
+
+            x_resolution = self.metadata.get('XResolution')
+            y_resolution = self.metadata.get('YResolution')
+            if x_resolution is not None and y_resolution is not None:
+                self._pixel_aspect = float(x_resolution) / float(y_resolution)
             # Todo: go over the next IFD
 
 
@@ -219,8 +266,11 @@ if __name__ == "__main__":
     print("\n=== img_photoshop ===")
     photoshop = JpegFile("img_photoshop.jpg")
     print("resolution", photoshop.resolution, photoshop.pixel_aspect)
+    import pprint
+    pprint.pprint(photoshop.metadata)
 
     print("\n=== img_photoshop_2par ===")
     photoshop_2 = JpegFile("img_photoshop_2par.jpg")
     print("resolution", photoshop_2.resolution, photoshop_2.pixel_aspect)
+    pprint.pprint(photoshop_2.metadata)
 
