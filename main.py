@@ -88,9 +88,9 @@ class JpegFile:
                 if ord(b) == self.SOS:
                     self._skip_segment(f)
                 if ord(b) == self.APP0:
-                    self._get_pixel_aspect_jfif(f)
+                    self._read_jfif_segment(f)
                 if ord(b) == self.APP1:
-                    self._get_pixel_aspect_exif(f)
+                    self._read_exif_segment(f)
                 if ord(b) == self.COM:
                     self._skip_segment(f)
 
@@ -113,19 +113,47 @@ class JpegFile:
         """ Get the resolution from a SOF (progressive DCT) segment """
         raise NotImplementedError("Progressive DCT images not supported.")
 
-    def _get_pixel_aspect_jfif(self, file):
+    def _read_jfif_segment(self, file):
         """ Get the pixel aspect ratio from a JFIF APP0 segment. """
+        # Todo: Add more metadata
         with ReadSegment(file):
             file.seek(10, os.SEEK_CUR)
             x_density, y_density = struct.unpack('>2H', file.read(4))
             self._pixel_aspect = float(x_density) / float(y_density)
 
-    def _get_pixel_aspect_exif(self, file):
+    def _read_exif_segment(self, file):
         """ Get the pixel aspect ratio from an EXIF APP1 segment. """
         tag_names = {
             0x0100: "ImageWidth",
             0x0101: "ImageLength",
             0x0102: "BitsPerSample",
+            0x0103: "Compression",
+            0x0106: "PhotometricInterpretation",
+            0x0112: "Orientation",
+            0x0115: "SamplesPerPixel",
+            0x011c: "PlanarConfiguration",
+            0x0212: "YCbCrSubSampling",
+            0x0213: "YCbCrPositioning",
+            0x011a: "XResolution",
+            0x011b: "YResolution",
+            0x0128: "ResolutionUnit",
+            0x0111: "StripOffsets",
+            0x0116: "RowsPerStrip",
+            0x0117: "StripByteCounts",
+            0x0201: "JPEGInterchangeFormat",
+            0x0202: "JPEGInterchangeFormatLength",
+            0x012d: "TransferFunction",
+            0x013e: "WhitePoint",
+            0x013f: "PrimaryChromaticities",
+            0x0211: "YCbCrCoefficients",
+            0x0214: "ReferenceBlackWhite",
+            0x0132: "DateTime",
+            0x010e: "ImageDescription",
+            0x010f: "Make",
+            0x0110: "Model",
+            0x0131: "Software",
+            0x013b: "Artist",
+            0x8298: "Copyright",
         }
 
         tag_types = {
@@ -140,8 +168,10 @@ class JpegFile:
         }
 
         with ReadSegment(file):
-            # Get byte order
             file.seek(8, os.SEEK_CUR)
+            tiff_header_offset = file.tell()
+
+            # Get byte order
             byte_order_signature = struct.unpack('>2s', file.read(2))[0]
             byte_order_signature = byte_order_signature.decode('utf-8')
             if byte_order_signature == "II":
@@ -158,17 +188,24 @@ class JpegFile:
             bytes_42 = struct.unpack(f'{endian}H', file.read(2))[0]
             assert bytes_42 == 0x002a, "EXIF data order does not match byte order signature."
 
-            # Next 4 bytes is the offset to the IFD0 (main Image File Directory; value includes TIFF header.
+            # Next 4 bytes is the offset to the IFD0, from the TIFF header.
             ifd_offset = struct.unpack(f'{endian}I', file.read(4))[0]
-            ifd_offset -= 8  # Compensate for TIFF header length
-            file.seek(ifd_offset, os.SEEK_CUR)
+            file.seek(tiff_header_offset + ifd_offset, os.SEEK_SET)
 
             # Iterate over each interoperability. See Exif2-2.PDF pg. 102 for more info.
             interop_count = struct.unpack(f'{endian}H', file.read(2))[0]
             for x in range(interop_count):
                 tag_id = struct.unpack(f'{endian}H', file.read(2))[0]
-                data_type = struct.unpack(f'{endian}H', file.read(2))[0]
-                count = struct.unpack(f'{endian}B', file.read(2))[0]
+                type_id = struct.unpack(f'{endian}H', file.read(2))[0]
+                count = struct.unpack(f'{endian}L', file.read(4))[0]
+
+                tag_name = tag_names.get(tag_id)
+                tag_type = tag_types.get(type_id)
+                print(tag_name, tag_type)
+                file.seek(4, os.SEEK_CUR)  # skips over value/offset. todo: actually get this data
+                # value = struct.unpack(f'{endian}{tag_type}', file.read(count))
+            # Todo: go over the next IFD
+
 
 if __name__ == "__main__":
     print("\n=== img_paint ===")
