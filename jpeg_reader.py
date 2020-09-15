@@ -43,7 +43,7 @@ class JpegFile:
     SOS = 0xda  # Start of Scan
     APP0 = 0xe0  # JFIF APP0
     APP1 = 0xe1  # EXIF APP1
-    APP2 = 0xe1  # EXIF APP2
+    APP2 = 0xe2  # EXIF APP2
     COM = 0xfe  # Comment
     EOI = 0xd9  # End of Image
 
@@ -53,6 +53,18 @@ class JpegFile:
         self._pixel_aspect = None
         self._metadata = dict()  # Any extra non-standard information
 
+        self._segment_dispatch = {
+            self.SOF0: self._get_resolution_baseline,
+            self.SOF2: self._get_resolution_progressive,
+            self.DHT: self._skip_segment,
+            self.DQT: self._skip_segment,
+            self.DRI: self._skip_segment,
+            self.SOS: self._skip_segment,
+            self.APP0: self._read_jfif_segment,
+            self.APP1: self._read_exif_segment,
+            self.APP2: self._skip_segment,
+            self.COM: self._skip_segment
+        }
         self._read_file()
 
     @property
@@ -81,26 +93,10 @@ class JpegFile:
                     # Skip any consecutive FF bytes (used as fill bytes for padding)
                     b = f.read(1)
 
-                if ord(b) == self.SOF0:
-                    self._get_resolution_baseline(f)
-                if ord(b) == self.SOF2:
-                    self._get_resolution_progressive(f)
-                if ord(b) == self.DHT:
-                    self._skip_segment(f)
-                if ord(b) == self.DQT:
-                    self._skip_segment(f)
-                if ord(b) == self.DRI:
-                    self._skip_segment(f)
-                if ord(b) == self.SOS:
-                    self._skip_segment(f)
-                if ord(b) == self.APP0:
-                    self._read_jfif_segment(f)
-                if ord(b) == self.APP1:
-                    self._read_exif_segment(f)
-                if ord(b) == self.APP2:
-                    self._skip_segment(f)
-                if ord(b) == self.COM:
-                    self._skip_segment(f)
+                # Get function from dispatch table
+                fn = self._segment_dispatch.get(ord(b))
+                if fn is not None:
+                    fn(f)
 
                 b = f.read(1)
 
@@ -155,7 +151,10 @@ class JpegFile:
                 endian = '>'
             else:
                 pos = hex(file.tell())
-                raise RuntimeError(f"Unsupported byte order signature at {pos}: {byte_order_signature}")
+                # raise RuntimeError(f"Unsupported byte order signature at {pos}: {byte_order_signature}")
+                # TODO: Figure out what's up with this segment and make it an actual error
+                # print(f"Unsupported byte order signature at {pos}: {byte_order_signature}")
+                return
 
             # Validate byte order; next 2 bytes are always 0x002a (42)
             bytes_42 = struct.unpack(f'{endian}H', file.read(2))[0]
@@ -201,6 +200,8 @@ class JpegFile:
                     value = value.decode('utf-8')
 
                 self._metadata.update({tag_name: value})
+
+
 
             # Update pixel aspect ratio
             x_resolution = self.metadata.get('XResolution')
