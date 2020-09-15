@@ -117,8 +117,18 @@ class JpegFile:
         """ Get the pixel aspect ratio from a JFIF APP0 segment. """
         # Todo: Add more metadata
         with ReadSegment(file):
-            file.seek(10, os.SEEK_CUR)
+            file.seek(7, os.SEEK_CUR)
+            version_major, version_minor = struct.unpack('>2B', file.read(2))
+            jfif_version = f"{version_major}.{version_minor}"
+            density_units = struct.unpack('>B', file.read(1))
             x_density, y_density = struct.unpack('>2H', file.read(4))
+
+            self._metadata.update({
+                'JFIFVersion': jfif_version,
+                'DensityUnits': density_units,
+                'Xdensity': x_density,
+                'Ydensity': y_density
+            })
             self._pixel_aspect = float(x_density) / float(y_density)
 
     def _read_exif_segment(self, file):
