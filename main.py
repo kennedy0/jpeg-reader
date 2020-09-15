@@ -240,18 +240,19 @@ class JpegFile:
                 if len(value) == 1:
                     value = value[0]
                 elif len(value) == 2:
+                    # Rational numbers
                     value = value[0] / value[1]
 
                 if tag_type.endswith('s'):
+                    value = value[:-1]  # Remove null byte
                     value = value.decode('utf-8')
 
                 self._metadata.update({tag_name: value})
 
             x_resolution = self.metadata.get('XResolution')
             y_resolution = self.metadata.get('YResolution')
-            if x_resolution is not None and y_resolution is not None:
+            if x_resolution is not None and y_resolution is not None and y_resolution != 0:
                 self._pixel_aspect = float(x_resolution) / float(y_resolution)
-            # Todo: go over the next IFD
 
 
 if __name__ == "__main__":
