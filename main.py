@@ -205,7 +205,8 @@ class JpegFile:
                 # 0x4d4d, Motorola, big-endian
                 endian = '>'
             else:
-                print(f"Unsupported byte order signature: {byte_order_signature}")
+                pos = hex(file.tell())
+                print(f"Unsupported byte order signature at {pos}: {byte_order_signature}")
                 return
 
             # Validate byte order; next 2 bytes are always 0x002a (42)
