@@ -1,5 +1,7 @@
 import os
+import pprint
 import struct
+import sys
 from typing import BinaryIO
 
 import utils.exif as exif_utils
@@ -122,7 +124,7 @@ class JpegFile:
             file.seek(7, os.SEEK_CUR)
             version_major, version_minor = struct.unpack('>2B', file.read(2))
             jfif_version = f"{version_major}.{version_minor}"
-            density_units = struct.unpack('>B', file.read(1))
+            density_units = struct.unpack('>B', file.read(1))[0]
             x_density, y_density = struct.unpack('>2H', file.read(4))
 
             self._metadata.update({
@@ -209,23 +211,24 @@ class JpegFile:
                 self._pixel_aspect = float(x_resolution) / float(y_resolution)
 
 
+def print_file_info(file_path):
+    """ Print out information about a jpeg file. """
+    print(f"reading {file_path}")
+    jpeg_file = JpegFile(file_path)
+    resolution = f"{jpeg_file.resolution[0]} x {jpeg_file.resolution[1]}"
+    if jpeg_file.pixel_aspect is not None:
+        resolution = f"{resolution} ({jpeg_file.pixel_aspect} PAR)"
+    print(f"resolution: {resolution}")
+    print(f"metadata: {pprint.pformat(jpeg_file.metadata, compact=False)}")
+    print("\n")
+
+
 if __name__ == "__main__":
-    print("\n=== img_paint ===")
-    paint = JpegFile("img_paint.jpg")
-    print("resolution", paint.resolution, paint.pixel_aspect)
-
-    print("\n=== img_natron ===")
-    natron = JpegFile("img_natron.jpg")
-    print("resolution", natron.resolution, natron.pixel_aspect)
-
-    print("\n=== img_photoshop ===")
-    photoshop = JpegFile("img_photoshop.jpg")
-    print("resolution", photoshop.resolution, photoshop.pixel_aspect)
-    import pprint
-    pprint.pprint(photoshop.metadata)
-
-    print("\n=== img_photoshop_2par ===")
-    photoshop_2 = JpegFile("img_photoshop_2par.jpg")
-    print("resolution", photoshop_2.resolution, photoshop_2.pixel_aspect)
-    pprint.pprint(photoshop_2.metadata)
-
+    file_path = sys.argv[1]
+    if os.path.isfile(file_path):
+        print_file_info(file_path)
+    elif os.path.isdir(file_path):
+        for file in os.listdir(file_path):
+            if file.endswith(('.jpg', '.jpeg', '.JPG', '.JPEG')):
+                fp = os.path.join("test_images", file)
+                print_file_info(fp)
