@@ -2,6 +2,7 @@ import os
 import pprint
 import struct
 import sys
+import traceback
 from typing import BinaryIO
 
 import utils.exif as exif_utils
@@ -231,4 +232,8 @@ if __name__ == "__main__":
         for file in os.listdir(file_path):
             if file.endswith(('.jpg', '.jpeg', '.JPG', '.JPEG')):
                 fp = os.path.join("test_images", file)
-                print_file_info(fp)
+                try:
+                    print_file_info(fp)
+                except Exception as e:
+                    print(traceback.format_exc())
+                    print("\n")
