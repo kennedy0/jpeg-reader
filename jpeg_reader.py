@@ -150,8 +150,7 @@ class JpegFile:
                 endian = '>'
             else:
                 pos = hex(file.tell())
-                print(f"Unsupported byte order signature at {pos}: {byte_order_signature}")
-                return
+                raise RuntimeError(f"Unsupported byte order signature at {pos}: {byte_order_signature}")
 
             # Validate byte order; next 2 bytes are always 0x002a (42)
             bytes_42 = struct.unpack(f'{endian}H', file.read(2))[0]
