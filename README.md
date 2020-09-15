@@ -12,7 +12,8 @@ JPEG:
 
 
 JFIF:
-* Specs: http://vip.sugovica.hu/Sardi/kepnezo/JPEG%20File%20Layout%20and%20Format.htm
+* Specs: http://www.ecma-international.org/publications/files/ECMA-TR/ECMA%20TR-098.pdf
+* http://vip.sugovica.hu/Sardi/kepnezo/JPEG%20File%20Layout%20and%20Format.htm
 * https://en.wikipedia.org/wiki/JPEG_File_Interchange_Format#File_format_structure
 
 EXIF:
