@@ -163,7 +163,7 @@ class JpegFile:
             ifd_offset = struct.unpack(f'{endian}I', file.read(4))[0]
             file.seek(tiff_header_offset + ifd_offset, os.SEEK_SET)
 
-            # Iterate over each interoperability. See Exif2-2.PDF pg. 102 for more info.
+            # Iterate over each interoperability.
             interop_count = struct.unpack(f'{endian}H', file.read(2))[0]
             for x in range(interop_count):
                 tag_id = struct.unpack(f'{endian}H', file.read(2))[0]
@@ -176,7 +176,7 @@ class JpegFile:
                     file.seek(4)
                     continue
 
-                tag_name = exif_utils.tag_names.get(tag_id)
+                tag_name = exif_utils.tiff_tag_names.get(tag_id)
                 tag_type = exif_utils.tag_types.get(type_id)
                 total_bytes = exif_utils.get_byte_count(tag_type, count)
                 if tag_type == 's':
