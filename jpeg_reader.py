@@ -43,6 +43,7 @@ class JpegFile:
     SOS = 0xda  # Start of Scan
     APP0 = 0xe0  # JFIF APP0
     APP1 = 0xe1  # EXIF APP1
+    APP2 = 0xe1  # EXIF APP2
     COM = 0xfe  # Comment
     EOI = 0xd9  # End of Image
 
@@ -96,6 +97,8 @@ class JpegFile:
                     self._read_jfif_segment(f)
                 if ord(b) == self.APP1:
                     self._read_exif_segment(f)
+                if ord(b) == self.APP2:
+                    self._skip_segment(f)
                 if ord(b) == self.COM:
                     self._skip_segment(f)
 
@@ -120,7 +123,6 @@ class JpegFile:
 
     def _read_jfif_segment(self, file):
         """ Get the pixel aspect ratio from a JFIF APP0 segment. """
-        # Todo: Add more metadata
         with ReadSegment(file):
             file.seek(7, os.SEEK_CUR)
             version_major, version_minor = struct.unpack('>2B', file.read(2))
@@ -169,12 +171,6 @@ class JpegFile:
                 tag_id = struct.unpack(f'{endian}H', file.read(2))[0]
                 type_id = struct.unpack(f'{endian}H', file.read(2))[0]
                 count = struct.unpack(f'{endian}L', file.read(4))[0]
-
-                if tag_id == 0x8769:
-                    # EXIF IFD Pointer
-                    # Todo: figure out what to do with this. Skip for now.
-                    file.seek(4)
-                    continue
 
                 tag_name = exif_utils.tiff_tag_names.get(tag_id)
                 tag_type = exif_utils.tag_types.get(type_id)
