@@ -68,11 +68,12 @@ class JpegFile:
                     # Stop reading file if we are at End of Image
                     return
 
-                # Get resolution from any SOF marker.
                 if marker in segment_markers.SOF_MARKERS:
+                    # Get resolution from any SOF marker.
                     self._get_resolution()
                     continue
                 elif marker in segment_markers.APP_MARKERS:
+                    # APP Markers can contain pixel aspect ratio and other useful metadata.
                     self._read_app_segment()
                     continue
                 else:
@@ -113,8 +114,21 @@ class JpegFile:
                 self._read_jfif_segment()
                 return
             elif self._unpack_header_string(4) == constants.EXIF_HEADER:
-                self._read_exif()
+                self._read_exif_segment()
                 return
+
+    def _unpack_header_string(self, length):
+        """ Read the next characters as a string. """
+        start_pos = self._file.tell()
+        # noinspection PyBroadException
+        try:
+            header = struct.unpack(f'>{length}s', self._file.read(length))[0]
+            header = header.decode('utf-8')
+        except Exception:
+            header = None
+        finally:
+            self._file.seek(start_pos, os.SEEK_SET)
+        return header
 
     def _read_jfif_segment(self):
         """ Read the JFIF APP0 segment. """
@@ -133,20 +147,7 @@ class JpegFile:
         })
         self._pixel_aspect = float(x_density) / float(y_density)
 
-    def _unpack_header_string(self, length):
-        """ Read the next characters as a string. """
-        start_pos = self._file.tell()
-        # noinspection PyBroadException
-        try:
-            header = struct.unpack(f'>{length}s', self._file.read(length))[0]
-            header = header.decode('utf-8')
-        except Exception:
-            header = None
-        finally:
-            self._file.seek(start_pos, os.SEEK_SET)
-        return header
-
-    def _read_exif(self):
+    def _read_exif_segment(self):
         self._file.seek(6, os.SEEK_CUR)
         tiff_header_offset = self._file.tell()
 
