@@ -41,6 +41,7 @@ class JpegFile:
         self._pixel_aspect = None
         self._metadata = dict()
 
+        self._file = None
         self._read_file()
 
     @property
@@ -57,73 +58,72 @@ class JpegFile:
 
     def _read_file(self):
         with open(self._file_path, 'rb') as f:
-            soi = self._find_next_marker(f)
+            self._file = f
+            soi = self._find_next_marker()
             assert soi == segment_markers.SOI, f"File is not a JPEG file: {self._file_path}"
 
             while True:
-                marker = self._find_next_marker(f)
+                marker = self._find_next_marker()
                 if marker == segment_markers.EOI:
                     # Stop reading file if we are at End of Image
                     return
 
                 # Get resolution from any SOF marker.
                 if marker in segment_markers.SOF_MARKERS:
-                    self._get_resolution(f)
+                    self._get_resolution()
                     continue
                 elif marker in segment_markers.APP_MARKERS:
-                    self._read_app_segment(f)
+                    self._read_app_segment()
                     continue
                 else:
-                    self._skip_segment(f)
+                    self._skip_segment()
 
-    @staticmethod
-    def _find_next_marker(file):
+    def _find_next_marker(self):
         """ Find and return the next marker (2 bytes). """
         # Find first byte following 0xff that is not 0xff or null
-        b1, b2 = file.read(2)
+        b1, b2 = self._file.read(2)
         while b1 != 0xff:
-            file.seek(-1, os.SEEK_CUR)
-            b1, b2 = file.read(2)
+            self._file.seek(-1, os.SEEK_CUR)
+            b1, b2 = self._file.read(2)
             while b2 == 0x00 or b2 == 0xff:
-                file.seek(-1, os.SEEK_CUR)
-                b1, b2 = file.read(2)
+                self._file.seek(-1, os.SEEK_CUR)
+                b1, b2 = self._file.read(2)
 
         # Read marker
         marker = b1 << 8 | b2
         return marker
 
-    @staticmethod
-    def _skip_segment(file):
+    def _skip_segment(self):
         """ Skip an unimplemented segment. """
-        with ReadSegment(file):
+        with ReadSegment(self._file):
             pass
 
-    def _get_resolution(self, file):
+    def _get_resolution(self):
         """ Get the resolution from a SOF frame header segment. """
-        with ReadSegment(file):
-            file.seek(3, os.SEEK_CUR)
-            height, width = struct.unpack('>2H', file.read(4))
+        with ReadSegment(self._file):
+            self._file.seek(3, os.SEEK_CUR)
+            height, width = struct.unpack('>2H', self._file.read(4))
             self._resolution = (width, height)
 
-    def _read_app_segment(self, file):
+    def _read_app_segment(self):
         """ Read an APP segment and handle any known segment types. """
-        with ReadSegment(file):
-            file.seek(2, os.SEEK_CUR)  # Skip segment length
-            if self._unpack_header_string(file, 4) in [constants.JFIF_HEADER, constants.JFXX_HEADER]:
-                self._read_jfif_segment(file)
+        with ReadSegment(self._file):
+            self._file.seek(2, os.SEEK_CUR)  # Skip segment length
+            if self._unpack_header_string(4) in [constants.JFIF_HEADER, constants.JFXX_HEADER]:
+                self._read_jfif_segment()
                 return
-            elif self._unpack_header_string(file, 4) == constants.EXIF_HEADER:
-                self._read_exif(file)
+            elif self._unpack_header_string(4) == constants.EXIF_HEADER:
+                self._read_exif()
                 return
 
-    def _read_jfif_segment(self, file):
+    def _read_jfif_segment(self):
         """ Read the JFIF APP0 segment. """
-        file.seek(5, os.SEEK_CUR)  # Skip JFIF header string
+        self._file.seek(5, os.SEEK_CUR)  # Skip JFIF header string
 
-        version_major, version_minor = struct.unpack('>2B', file.read(2))
+        version_major, version_minor = struct.unpack('>2B', self._file.read(2))
         jfif_version = f"{version_major}.{version_minor}"
-        density_units = struct.unpack('>B', file.read(1))[0]
-        x_density, y_density = struct.unpack('>2H', file.read(4))
+        density_units = struct.unpack('>B', self._file.read(1))[0]
+        x_density, y_density = struct.unpack('>2H', self._file.read(4))
 
         self._metadata.update({
             'JFIFVersion': jfif_version,
@@ -133,31 +133,30 @@ class JpegFile:
         })
         self._pixel_aspect = float(x_density) / float(y_density)
 
-    @staticmethod
-    def _unpack_header_string(file, length):
+    def _unpack_header_string(self, length):
         """ Read the next characters as a string. """
-        start_pos = file.tell()
+        start_pos = self._file.tell()
         # noinspection PyBroadException
         try:
-            header = struct.unpack(f'>{length}s', file.read(length))[0]
+            header = struct.unpack(f'>{length}s', self._file.read(length))[0]
             header = header.decode('utf-8')
         except Exception:
             header = None
         finally:
-            file.seek(start_pos, os.SEEK_SET)
+            self._file.seek(start_pos, os.SEEK_SET)
         return header
 
-    def _read_exif(self, file):
-        file.seek(6, os.SEEK_CUR)
-        tiff_header_offset = file.tell()
+    def _read_exif(self):
+        self._file.seek(6, os.SEEK_CUR)
+        tiff_header_offset = self._file.tell()
 
         try:
-            endian = self._get_exif_byte_order(file, tiff_header_offset)
+            endian = self._get_exif_byte_order(tiff_header_offset)
         except Exception as e:
             print(e)
             return
 
-        self._read_exif_ifds(file, tiff_header_offset, endian)
+        self._read_exif_ifds(tiff_header_offset, endian)
 
         # Update pixel aspect ratio
         x_resolution = self.metadata.get('XResolution')
@@ -165,11 +164,10 @@ class JpegFile:
         if x_resolution is not None and y_resolution is not None and y_resolution != 0:
             self._pixel_aspect = float(x_resolution) / float(y_resolution)
 
-    @staticmethod
-    def _get_exif_byte_order(file, tiff_header_offset):
+    def _get_exif_byte_order(self, tiff_header_offset):
         """ Get byte order for EXIF APP segment. """
-        file.seek(tiff_header_offset, os.SEEK_SET)
-        byte_order_signature = struct.unpack('>2s', file.read(2))[0]
+        self._file.seek(tiff_header_offset, os.SEEK_SET)
+        byte_order_signature = struct.unpack('>2s', self._file.read(2))[0]
         byte_order_signature = byte_order_signature.decode('utf-8')
         if byte_order_signature == "II":
             # 0x4949, Intel, little-endian
@@ -178,26 +176,25 @@ class JpegFile:
             # 0x4d4d, Motorola, big-endian
             endian = '>'
         else:
-            pos = hex(file.tell())
+            pos = hex(self._file.tell())
             raise RuntimeError(f"Unsupported byte order signature at {pos}: {byte_order_signature}")
 
         # Validate byte order; next 2 bytes are always 0x002a (42)
-        bytes_42 = struct.unpack(f'{endian}H', file.read(2))[0]
+        bytes_42 = struct.unpack(f'{endian}H', self._file.read(2))[0]
         assert bytes_42 == 0x002a, "EXIF data order does not match byte order signature."
 
         return endian
 
-    def _read_exif_ifds(self, file, tiff_header_offset, endian):
+    def _read_exif_ifds(self, tiff_header_offset, endian):
         """ Read all IFDs from an EXIF Segment and set metadata. """
         # Get offset to the first IFD, from the TIFF header.
-        file.seek(tiff_header_offset, os.SEEK_SET)
-        file.seek(4, os.SEEK_CUR)
-        ifd_pointer = struct.unpack(f'{endian}I', file.read(4))[0]
+        self._file.seek(tiff_header_offset, os.SEEK_SET)
+        self._file.seek(4, os.SEEK_CUR)
+        ifd_pointer = struct.unpack(f'{endian}I', self._file.read(4))[0]
         ifd0_offset = tiff_header_offset + ifd_pointer
 
         # Get info from IFD0.
         ifd0_data = self._get_ifd_data(
-           file,
            ifd0_offset,
            tiff_header_offset,
            endian,
@@ -210,7 +207,6 @@ class JpegFile:
             exif_ifd_pointer = ifd0_data.pop(exif_ifd_tag)
             exif_ifd_offset = tiff_header_offset + exif_ifd_pointer
             exif_ifd_data = self._get_ifd_data(
-                file,
                 exif_ifd_offset,
                 tiff_header_offset,
                 endian,
@@ -225,7 +221,6 @@ class JpegFile:
             gpsinfo_ifd_pointer = ifd0_data.pop(gpsinfo_ifd_tag)
             gpsinfo_ifd_offset = tiff_header_offset + gpsinfo_ifd_pointer
             gpsinfo_ifd_data = self._get_ifd_data(
-                file,
                 gpsinfo_ifd_offset,
                 tiff_header_offset,
                 endian,
@@ -237,16 +232,16 @@ class JpegFile:
         self._metadata.update(exif_ifd_data)
         self._metadata.update(gpsinfo_ifd_data)
 
-    def _get_ifd_data(self, file, ifd_offset, tiff_header_offset, endian, tag_names):
+    def _get_ifd_data(self, ifd_offset, tiff_header_offset, endian, tag_names):
         """ Iterate over each interoperability. """
         ifd_data = dict()
-        file.seek(ifd_offset, os.SEEK_SET)
+        self._file.seek(ifd_offset, os.SEEK_SET)
 
-        interop_count = struct.unpack(f'{endian}H', file.read(2))[0]
+        interop_count = struct.unpack(f'{endian}H', self._file.read(2))[0]
         for x in range(interop_count):
-            tag_id = struct.unpack(f'{endian}H', file.read(2))[0]
-            type_id = struct.unpack(f'{endian}H', file.read(2))[0]
-            count = struct.unpack(f'{endian}L', file.read(4))[0]
+            tag_id = struct.unpack(f'{endian}H', self._file.read(2))[0]
+            type_id = struct.unpack(f'{endian}H', self._file.read(2))[0]
+            count = struct.unpack(f'{endian}L', self._file.read(4))[0]
 
             tag_name = tag_names.get(tag_id)
             tag_type = exif.tag_types.get(type_id)
@@ -257,20 +252,20 @@ class JpegFile:
             if tag_type is None:
                 # Skip fields with UNDEFINED types
                 # TODO: Get value for UNDEFINED field types
-                file.seek(4)
+                self._file.seek(4)
                 continue
 
             elif total_bytes <= 4:
                 # When total bytes is 4 or less, next 4 bytes stores the value.
-                value = struct.unpack(f'{endian}{tag_type}', file.read(total_bytes))
-                file.seek(4 - total_bytes, os.SEEK_CUR)  # Handle padding
+                value = struct.unpack(f'{endian}{tag_type}', self._file.read(total_bytes))
+                self._file.seek(4 - total_bytes, os.SEEK_CUR)  # Handle padding
             else:
                 # When total bytes is greater than 4, the next 4 bytes stores the offset to the value.
-                value_offset = struct.unpack(f'{endian}I', file.read(4))[0]
-                current_offset = file.tell()
-                file.seek(tiff_header_offset + value_offset, os.SEEK_SET)
-                value = struct.unpack(f'{endian}{tag_type}', file.read(total_bytes))
-                file.seek(current_offset, os.SEEK_SET)
+                value_offset = struct.unpack(f'{endian}I', self._file.read(4))[0]
+                current_offset = self._file.tell()
+                self._file.seek(tiff_header_offset + value_offset, os.SEEK_SET)
+                value = struct.unpack(f'{endian}{tag_type}', self._file.read(total_bytes))
+                self._file.seek(current_offset, os.SEEK_SET)
 
             # Format values for metadata
             if value is None:
