@@ -19,3 +19,5 @@ JFIF:
 EXIF:
 * Specs in /resources/Exif2-2.PDF
 * https://www.media.mit.edu/pia/Research/deepview/exif.html
+
+http://www.ozhiker.com/electronics/pjmt/jpeg_info/app_segments.html

@@ -5,7 +5,9 @@ import sys
 import traceback
 from typing import BinaryIO
 
-import utils.exif as exif_utils
+from utils import exif
+from utils import segment_markers
+from utils import xmp
 
 
 class ReadSegment:
@@ -33,37 +35,15 @@ class ReadSegment:
 
 
 class JpegFile:
-    # Segment Markers
-    SOI = 0xd8  # Start of Image
-    SOF0 = 0xc0  # Start of Frame (baseline DCT)
-    SOF2 = 0xc2  # Start of Frame (progressive DCT)
-    DHT = 0xc4  # Define Huffman Table(s)
-    DQT = 0xdb  # Define Quantization Table(s)
-    DRI = 0xdd  # Define Restart Interval
-    SOS = 0xda  # Start of Scan
-    APP0 = 0xe0  # JFIF APP0
-    APP1 = 0xe1  # EXIF APP1
-    APP2 = 0xe2  # EXIF APP2
-    COM = 0xfe  # Comment
-    EOI = 0xd9  # End of Image
-
     def __init__(self, file_path):
         self._file_path = file_path
         self._resolution = (None, None)
         self._pixel_aspect = None
-        self._metadata = dict()  # Any extra non-standard information
+        self._metadata = dict()
 
         self._segment_dispatch = {
-            self.SOF0: self._get_resolution_baseline,
-            self.SOF2: self._get_resolution_progressive,
-            self.DHT: self._skip_segment,
-            self.DQT: self._skip_segment,
-            self.DRI: self._skip_segment,
-            self.SOS: self._skip_segment,
-            self.APP0: self._read_jfif_segment,
-            self.APP1: self._read_exif_segment,
-            self.APP2: self._skip_segment,
-            self.COM: self._skip_segment
+            segment_markers.APP0: self._read_app0,
+            segment_markers.APP1: self._read_app1,
         }
         self._read_file()
 
@@ -81,24 +61,42 @@ class JpegFile:
 
     def _read_file(self):
         with open(self._file_path, 'rb') as f:
-            soi = struct.unpack('>H', f.read(2))[0]  # Start of image
-            assert soi == 0xffd8, f"File is not a JPEG file: {self._file_path}"
+            soi = self._find_next_marker(f)
+            assert soi == segment_markers.SOI, f"File is not a JPEG file: {self._file_path}"
 
-            b = f.read(1)
-            while b and ord(b) != self.EOI:
-                while ord(b) != 0xff:
-                    # FF indicates start of a marker
-                    b = f.read(1)
-                while ord(b) == 0xff:
-                    # Skip any consecutive FF bytes (used as fill bytes for padding)
-                    b = f.read(1)
+            while True:
+                marker = self._find_next_marker(f)
+                if marker == segment_markers.EOI:
+                    # Stop reading file if we are at End of Image
+                    return
 
-                # Get function from dispatch table
-                fn = self._segment_dispatch.get(ord(b))
-                if fn is not None:
-                    fn(f)
+                # Get resolution from any SOF marker.
+                if marker in segment_markers.SOF_MARKERS:
+                    self._get_resolution(f)
+                    continue
 
-                b = f.read(1)
+                # See if there's an implemented function to read this segment
+                segment_reader_fn = self._segment_dispatch.get(marker)
+                if segment_reader_fn is not None:
+                    segment_reader_fn(f)
+                else:
+                    self._skip_segment(f)
+
+    @staticmethod
+    def _find_next_marker(file):
+        """ Find and return the next marker (2 bytes). """
+        # Find first byte following 0xff that is not 0xff or null
+        b1, b2 = file.read(2)
+        while b1 != 0xff:
+            file.seek(-1, os.SEEK_CUR)
+            b1, b2 = file.read(2)
+            while b2 == 0x00 or b2 == 0xff:
+                file.seek(-1, os.SEEK_CUR)
+                b1, b2 = file.read(2)
+
+        # Read marker
+        marker = b1 << 8 | b2
+        return marker
 
     @staticmethod
     def _skip_segment(file):
@@ -106,19 +104,15 @@ class JpegFile:
         with ReadSegment(file):
             pass
 
-    def _get_resolution_baseline(self, file):
-        """ Get the resolution from a SOF (baseline DCT) segment """
+    def _get_resolution(self, file):
+        """ Get the resolution from a SOF frame header segment. """
         with ReadSegment(file):
             file.seek(3, os.SEEK_CUR)
             height, width = struct.unpack('>2H', file.read(4))
             self._resolution = (width, height)
 
-    def _get_resolution_progressive(self, file):
-        """ Get the resolution from a SOF (progressive DCT) segment """
-        raise NotImplementedError("Progressive DCT images not supported.")
-
-    def _read_jfif_segment(self, file):
-        """ Get the pixel aspect ratio from a JFIF APP0 segment. """
+    def _read_app0(self, file):
+        """ Read the JFIF APP0 segment. """
         with ReadSegment(file):
             file.seek(7, os.SEEK_CUR)
             version_major, version_minor = struct.unpack('>2B', file.read(2))
@@ -134,25 +128,51 @@ class JpegFile:
             })
             self._pixel_aspect = float(x_density) / float(y_density)
 
-    def _read_exif_segment(self, file):
-        """ Get the pixel aspect ratio from an EXIF APP1 segment. """
+    def _read_app1(self, file):
+        """ Read the APP1 segment.
+        The APP1 marker is used by both EXIF and XMP segments. Read the header string to see which is used.
+        """
         with ReadSegment(file):
-            file.seek(8, os.SEEK_CUR)
-            tiff_header_offset = file.tell()
+            file.seek(2, os.SEEK_CUR)
+            start_pos = file.tell()
 
+            # noinspection PyBroadException
             try:
-                endian = self._get_exif_byte_order(file, tiff_header_offset)
-            except Exception as e:
-                print(e)
+                header = struct.unpack('>4s', file.read(4))[0]
+                header = header.decode('utf-8')
+                assert header == exif.exif_header
+                self._read_exif(file)
                 return
+            except Exception:
+                file.seek(start_pos, os.SEEK_SET)
 
-            self._read_exif_ifds(file, tiff_header_offset, endian)
+            # noinspection PyBroadException
+            try:
+                header = struct.unpack('>28s', file.read(28))[0]
+                header = header.decode('utf-8')
+                assert header == xmp.xmp_header
+                # ToDo: Read XMP
+                pass
+            except Exception:
+                file.seek(start_pos, os.SEEK_SET)
 
-            # Update pixel aspect ratio
-            x_resolution = self.metadata.get('XResolution')
-            y_resolution = self.metadata.get('YResolution')
-            if x_resolution is not None and y_resolution is not None and y_resolution != 0:
-                self._pixel_aspect = float(x_resolution) / float(y_resolution)
+    def _read_exif(self, file):
+        file.seek(2, os.SEEK_CUR)
+        tiff_header_offset = file.tell()
+
+        try:
+            endian = self._get_exif_byte_order(file, tiff_header_offset)
+        except Exception as e:
+            print(e)
+            return
+
+        self._read_exif_ifds(file, tiff_header_offset, endian)
+
+        # Update pixel aspect ratio
+        x_resolution = self.metadata.get('XResolution')
+        y_resolution = self.metadata.get('YResolution')
+        if x_resolution is not None and y_resolution is not None and y_resolution != 0:
+            self._pixel_aspect = float(x_resolution) / float(y_resolution)
 
     @staticmethod
     def _get_exif_byte_order(file, tiff_header_offset):
@@ -190,23 +210,27 @@ class JpegFile:
            ifd0_offset,
            tiff_header_offset,
            endian,
-           tag_names=exif_utils.tiff_tag_names)
+           tag_names=exif.tiff_tag_names)
 
         # IDF0 will contain pointer to EXIF IFD.
-        exif_ifd_tag = exif_utils.tiff_tag_names.get(0x8769)
-        exif_ifd_pointer = ifd0_data.pop(exif_ifd_tag)
-        exif_ifd_offset = tiff_header_offset + exif_ifd_pointer
-        exif_ifd_data = self._get_ifd_data(
-            file,
-            exif_ifd_offset,
-            tiff_header_offset,
-            endian,
-            tag_names=exif_utils.exif_tag_names)
+        # noinspection PyBroadException
+        try:
+            exif_ifd_tag = exif.tiff_tag_names.get(0x8769)
+            exif_ifd_pointer = ifd0_data.pop(exif_ifd_tag)
+            exif_ifd_offset = tiff_header_offset + exif_ifd_pointer
+            exif_ifd_data = self._get_ifd_data(
+                file,
+                exif_ifd_offset,
+                tiff_header_offset,
+                endian,
+                tag_names=exif.exif_tag_names)
+        except Exception:
+            exif_ifd_data = {}
 
         # IDF0 may contain optional GPSInfo pointer.
         # noinspection PyBroadException
         try:
-            gpsinfo_ifd_tag = exif_utils.tiff_tag_names.get(0x8825)
+            gpsinfo_ifd_tag = exif.tiff_tag_names.get(0x8825)
             gpsinfo_ifd_pointer = ifd0_data.pop(gpsinfo_ifd_tag)
             gpsinfo_ifd_offset = tiff_header_offset + gpsinfo_ifd_pointer
             gpsinfo_ifd_data = self._get_ifd_data(
@@ -214,9 +238,9 @@ class JpegFile:
                 gpsinfo_ifd_offset,
                 tiff_header_offset,
                 endian,
-                tag_names=exif_utils.gpsinfo_tag_names)
+                tag_names=exif.gpsinfo_tag_names)
         except Exception:
-            gpsinfo_ifd_data = dict()
+            gpsinfo_ifd_data = {}
 
         self._metadata.update(ifd0_data)
         self._metadata.update(exif_ifd_data)
@@ -234,8 +258,8 @@ class JpegFile:
             count = struct.unpack(f'{endian}L', file.read(4))[0]
 
             tag_name = tag_names.get(tag_id)
-            tag_type = exif_utils.tag_types.get(type_id)
-            total_bytes = exif_utils.get_byte_count(tag_type, count)
+            tag_type = exif.tag_types.get(type_id)
+            total_bytes = exif.get_byte_count(tag_type, count)
             if tag_type == 's':
                 tag_type = f'{count}s'
 
@@ -292,9 +316,9 @@ if __name__ == "__main__":
     if os.path.isfile(p):
         print_file_info(p)
     elif os.path.isdir(p):
-        for f in os.listdir(p):
-            if f.endswith(('.jpg', '.jpeg', '.JPG', '.JPEG')):
-                fp = os.path.join("test_images", f)
+        for item in os.listdir(p):
+            if item.endswith(('.jpg', '.jpeg', '.JPG', '.JPEG')):
+                fp = os.path.join(p, item)
                 # noinspection PyBroadException
                 try:
                     print_file_info(fp)

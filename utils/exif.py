@@ -1,3 +1,5 @@
+exif_header = "Exif"
+
 tiff_tag_names = {
     0x0100: "ImageWidth",
     0x0101: "ImageLength",
