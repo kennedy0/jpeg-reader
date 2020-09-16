@@ -110,7 +110,7 @@ class JpegFile:
         """ Get the resolution from a SOF (baseline DCT) segment """
         with ReadSegment(file):
             file.seek(3, os.SEEK_CUR)
-            width, height = struct.unpack('>2H', file.read(4))
+            height, width = struct.unpack('>2H', file.read(4))
             self._resolution = (width, height)
 
     def _get_resolution_progressive(self, file):
