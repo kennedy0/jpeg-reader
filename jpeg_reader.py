@@ -140,74 +140,139 @@ class JpegFile:
             file.seek(8, os.SEEK_CUR)
             tiff_header_offset = file.tell()
 
-            # Get byte order
-            byte_order_signature = struct.unpack('>2s', file.read(2))[0]
-            byte_order_signature = byte_order_signature.decode('utf-8')
-            if byte_order_signature == "II":
-                # 0x4949, Intel, little-endian
-                endian = '<'
-            elif byte_order_signature == "MM":
-                # 0x4d4d, Motorola, big-endian
-                endian = '>'
-            else:
-                pos = hex(file.tell())
-                # raise RuntimeError(f"Unsupported byte order signature at {pos}: {byte_order_signature}")
-                # TODO: Figure out what's up with this segment and make it an actual error
-                # print(f"Unsupported byte order signature at {pos}: {byte_order_signature}")
+            try:
+                endian = self._get_exif_byte_order(file, tiff_header_offset)
+            except Exception as e:
+                print(e)
                 return
 
-            # Validate byte order; next 2 bytes are always 0x002a (42)
-            bytes_42 = struct.unpack(f'{endian}H', file.read(2))[0]
-            assert bytes_42 == 0x002a, "EXIF data order does not match byte order signature."
-
-            # Next 4 bytes is the offset to the IFD0, from the TIFF header.
-            ifd_offset = struct.unpack(f'{endian}I', file.read(4))[0]
-            file.seek(tiff_header_offset + ifd_offset, os.SEEK_SET)
-
-            # Iterate over each interoperability.
-            interop_count = struct.unpack(f'{endian}H', file.read(2))[0]
-            for x in range(interop_count):
-                tag_id = struct.unpack(f'{endian}H', file.read(2))[0]
-                type_id = struct.unpack(f'{endian}H', file.read(2))[0]
-                count = struct.unpack(f'{endian}L', file.read(4))[0]
-
-                tag_name = exif_utils.tiff_tag_names.get(tag_id)
-                tag_type = exif_utils.tag_types.get(type_id)
-                total_bytes = exif_utils.get_byte_count(tag_type, count)
-                if tag_type == 's':
-                    tag_type = f'{count}s'
-
-                if total_bytes <= 4:
-                    # When total bytes is 4 or less, next 4 bytes stores the value.
-                    value = struct.unpack(f'{endian}{tag_type}', file.read(total_bytes))
-                    file.seek(4-total_bytes, os.SEEK_CUR)  # Handle padding
-                else:
-                    # When total bytes is greater than 4, the next 4 bytes stores the offset to the value.
-                    value_offset = struct.unpack(f'{endian}I', file.read(4))[0]
-                    current_offset = file.tell()
-                    file.seek(tiff_header_offset+value_offset, os.SEEK_SET)
-                    value = struct.unpack(f'{endian}{tag_type}', file.read(total_bytes))
-                    file.seek(current_offset, os.SEEK_SET)
-
-                # Format values for metadata
-                if len(value) == 1:
-                    value = value[0]
-                elif len(value) == 2:
-                    # Rational numbers
-                    value = value[0] / value[1]
-                if tag_type.endswith('s'):
-                    value = value[:-1]  # Remove null byte
-                    value = value.decode('utf-8')
-
-                self._metadata.update({tag_name: value})
-
-
+            self._read_exif_ifds(file, tiff_header_offset, endian)
 
             # Update pixel aspect ratio
             x_resolution = self.metadata.get('XResolution')
             y_resolution = self.metadata.get('YResolution')
             if x_resolution is not None and y_resolution is not None and y_resolution != 0:
                 self._pixel_aspect = float(x_resolution) / float(y_resolution)
+
+    @staticmethod
+    def _get_exif_byte_order(file, tiff_header_offset):
+        """ Get byte order for EXIF APP segment. """
+        file.seek(tiff_header_offset, os.SEEK_SET)
+        byte_order_signature = struct.unpack('>2s', file.read(2))[0]
+        byte_order_signature = byte_order_signature.decode('utf-8')
+        if byte_order_signature == "II":
+            # 0x4949, Intel, little-endian
+            endian = '<'
+        elif byte_order_signature == "MM":
+            # 0x4d4d, Motorola, big-endian
+            endian = '>'
+        else:
+            pos = hex(file.tell())
+            raise RuntimeError(f"Unsupported byte order signature at {pos}: {byte_order_signature}")
+
+        # Validate byte order; next 2 bytes are always 0x002a (42)
+        bytes_42 = struct.unpack(f'{endian}H', file.read(2))[0]
+        assert bytes_42 == 0x002a, "EXIF data order does not match byte order signature."
+
+        return endian
+
+    def _read_exif_ifds(self, file, tiff_header_offset, endian):
+        """ Read all IFDs from an EXIF Segment and set metadata. """
+        # Get offset to the first IFD, from the TIFF header.
+        file.seek(tiff_header_offset, os.SEEK_SET)
+        file.seek(4, os.SEEK_CUR)
+        ifd_pointer = struct.unpack(f'{endian}I', file.read(4))[0]
+        ifd0_offset = tiff_header_offset + ifd_pointer
+
+        # Get info from IFD0.
+        ifd0_data = self._get_ifd_data(
+           file,
+           ifd0_offset,
+           tiff_header_offset,
+           endian,
+           tag_names=exif_utils.tiff_tag_names)
+
+        # IDF0 will contain pointer to EXIF IFD.
+        exif_ifd_tag = exif_utils.tiff_tag_names.get(0x8769)
+        exif_ifd_pointer = ifd0_data.pop(exif_ifd_tag)
+        exif_ifd_offset = tiff_header_offset + exif_ifd_pointer
+        exif_ifd_data = self._get_ifd_data(
+            file,
+            exif_ifd_offset,
+            tiff_header_offset,
+            endian,
+            tag_names=exif_utils.exif_tag_names)
+
+        # IDF0 may contain optional GPSInfo pointer.
+        # noinspection PyBroadException
+        try:
+            gpsinfo_ifd_tag = exif_utils.tiff_tag_names.get(0x8825)
+            gpsinfo_ifd_pointer = ifd0_data.pop(gpsinfo_ifd_tag)
+            gpsinfo_ifd_offset = tiff_header_offset + gpsinfo_ifd_pointer
+            gpsinfo_ifd_data = self._get_ifd_data(
+                file,
+                gpsinfo_ifd_offset,
+                tiff_header_offset,
+                endian,
+                tag_names=exif_utils.gpsinfo_tag_names)
+        except Exception:
+            gpsinfo_ifd_data = dict()
+
+        self._metadata.update(ifd0_data)
+        self._metadata.update(exif_ifd_data)
+        self._metadata.update(gpsinfo_ifd_data)
+
+    def _get_ifd_data(self, file, ifd_offset, tiff_header_offset, endian, tag_names):
+        """ Iterate over each interoperability. """
+        ifd_data = dict()
+        file.seek(ifd_offset, os.SEEK_SET)
+
+        interop_count = struct.unpack(f'{endian}H', file.read(2))[0]
+        for x in range(interop_count):
+            tag_id = struct.unpack(f'{endian}H', file.read(2))[0]
+            type_id = struct.unpack(f'{endian}H', file.read(2))[0]
+            count = struct.unpack(f'{endian}L', file.read(4))[0]
+
+            tag_name = tag_names.get(tag_id)
+            tag_type = exif_utils.tag_types.get(type_id)
+            total_bytes = exif_utils.get_byte_count(tag_type, count)
+            if tag_type == 's':
+                tag_type = f'{count}s'
+
+            if tag_type is None:
+                # Skip fields with UNDEFINED types
+                # TODO: Get value for UNDEFINED field types
+                file.seek(4)
+                continue
+
+            elif total_bytes <= 4:
+                # When total bytes is 4 or less, next 4 bytes stores the value.
+                value = struct.unpack(f'{endian}{tag_type}', file.read(total_bytes))
+                file.seek(4 - total_bytes, os.SEEK_CUR)  # Handle padding
+            else:
+                # When total bytes is greater than 4, the next 4 bytes stores the offset to the value.
+                value_offset = struct.unpack(f'{endian}I', file.read(4))[0]
+                current_offset = file.tell()
+                file.seek(tiff_header_offset + value_offset, os.SEEK_SET)
+                value = struct.unpack(f'{endian}{tag_type}', file.read(total_bytes))
+                file.seek(current_offset, os.SEEK_SET)
+
+            # Format values for metadata
+            if value is None:
+                pass
+            elif len(value) == 1:
+                value = value[0]
+            elif len(value) == 2:
+                # Rational numbers
+                value = value[0] / value[1]
+            if tag_type is not None and tag_type.endswith('s'):
+                # Strings
+                value = value[:-1]  # Remove null byte
+                value = value.decode('utf-8')
+
+            ifd_data.update({tag_name: value})
+
+        return ifd_data
 
 
 def print_file_info(file_path):
@@ -223,15 +288,16 @@ def print_file_info(file_path):
 
 
 if __name__ == "__main__":
-    file_path = sys.argv[1]
-    if os.path.isfile(file_path):
-        print_file_info(file_path)
-    elif os.path.isdir(file_path):
-        for file in os.listdir(file_path):
-            if file.endswith(('.jpg', '.jpeg', '.JPG', '.JPEG')):
-                fp = os.path.join("test_images", file)
+    p = sys.argv[1]
+    if os.path.isfile(p):
+        print_file_info(p)
+    elif os.path.isdir(p):
+        for f in os.listdir(p):
+            if f.endswith(('.jpg', '.jpeg', '.JPG', '.JPEG')):
+                fp = os.path.join("test_images", f)
+                # noinspection PyBroadException
                 try:
                     print_file_info(fp)
-                except Exception as e:
+                except Exception:
                     print(traceback.format_exc())
                     print("\n")

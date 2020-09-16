@@ -93,13 +93,15 @@ exif_tag_names = {
     0xa420: 'ImageUniqueID',
 }
 
+gpsinfo_tag_names = {}
+
 tag_types = {
     1: 'B',  # BYTE
     2: 's',  # ASCII
     3: 'H',  # SHORT
     4: 'L',  # LONG
     5: '2L',  # RATIONAL (Two LONGs; first is the numerator, second is the denominator)
-    7: 'B',  # UNDEFINED (8-bit byte that can take any value)
+    7: None,  # UNDEFINED (8-bit byte that can take any value. Implementation is specific to the field.)
     9: 'l',  # SLONG
     10: '2l',  # SRATIONAL (Two SLONGs; first is the numerator, second is the denominator)
 }
@@ -107,7 +109,7 @@ tag_types = {
 
 def get_byte_count(tag_type, count):
     """ Return the number of bytes for a given tag. """
-    if tag_type in ['B', 's']:
+    if tag_type in ['B', 's', None]:
         tag_bytes = 1
     elif tag_type in ['H']:
         tag_bytes = 2
