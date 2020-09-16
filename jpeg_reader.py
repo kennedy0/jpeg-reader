@@ -5,9 +5,9 @@ import sys
 import traceback
 from typing import BinaryIO
 
+from utils import constants
 from utils import exif
 from utils import segment_markers
-from utils import xmp
 
 
 class ReadSegment:
@@ -41,10 +41,6 @@ class JpegFile:
         self._pixel_aspect = None
         self._metadata = dict()
 
-        self._segment_dispatch = {
-            segment_markers.APP0: self._read_app0,
-            segment_markers.APP1: self._read_app1,
-        }
         self._read_file()
 
     @property
@@ -74,11 +70,9 @@ class JpegFile:
                 if marker in segment_markers.SOF_MARKERS:
                     self._get_resolution(f)
                     continue
-
-                # See if there's an implemented function to read this segment
-                segment_reader_fn = self._segment_dispatch.get(marker)
-                if segment_reader_fn is not None:
-                    segment_reader_fn(f)
+                elif marker in segment_markers.APP_MARKERS:
+                    self._read_app_segment(f)
+                    continue
                 else:
                     self._skip_segment(f)
 
@@ -111,53 +105,50 @@ class JpegFile:
             height, width = struct.unpack('>2H', file.read(4))
             self._resolution = (width, height)
 
-    def _read_app0(self, file):
-        """ Read the JFIF APP0 segment. """
+    def _read_app_segment(self, file):
+        """ Read an APP segment and handle any known segment types. """
         with ReadSegment(file):
-            file.seek(7, os.SEEK_CUR)
-            version_major, version_minor = struct.unpack('>2B', file.read(2))
-            jfif_version = f"{version_major}.{version_minor}"
-            density_units = struct.unpack('>B', file.read(1))[0]
-            x_density, y_density = struct.unpack('>2H', file.read(4))
-
-            self._metadata.update({
-                'JFIFVersion': jfif_version,
-                'DensityUnits': density_units,
-                'Xdensity': x_density,
-                'Ydensity': y_density
-            })
-            self._pixel_aspect = float(x_density) / float(y_density)
-
-    def _read_app1(self, file):
-        """ Read the APP1 segment.
-        The APP1 marker is used by both EXIF and XMP segments. Read the header string to see which is used.
-        """
-        with ReadSegment(file):
-            file.seek(2, os.SEEK_CUR)
-            start_pos = file.tell()
-
-            # noinspection PyBroadException
-            try:
-                header = struct.unpack('>4s', file.read(4))[0]
-                header = header.decode('utf-8')
-                assert header == exif.exif_header
+            file.seek(2, os.SEEK_CUR)  # Skip segment length
+            if self._unpack_header_string(file, 4) in [constants.JFIF_HEADER, constants.JFXX_HEADER]:
+                self._read_jfif_segment(file)
+                return
+            elif self._unpack_header_string(file, 4) == constants.EXIF_HEADER:
                 self._read_exif(file)
                 return
-            except Exception:
-                file.seek(start_pos, os.SEEK_SET)
 
-            # noinspection PyBroadException
-            try:
-                header = struct.unpack('>28s', file.read(28))[0]
-                header = header.decode('utf-8')
-                assert header == xmp.xmp_header
-                # ToDo: Read XMP
-                pass
-            except Exception:
-                file.seek(start_pos, os.SEEK_SET)
+    def _read_jfif_segment(self, file):
+        """ Read the JFIF APP0 segment. """
+        file.seek(5, os.SEEK_CUR)  # Skip JFIF header string
+
+        version_major, version_minor = struct.unpack('>2B', file.read(2))
+        jfif_version = f"{version_major}.{version_minor}"
+        density_units = struct.unpack('>B', file.read(1))[0]
+        x_density, y_density = struct.unpack('>2H', file.read(4))
+
+        self._metadata.update({
+            'JFIFVersion': jfif_version,
+            'DensityUnits': density_units,
+            'Xdensity': x_density,
+            'Ydensity': y_density
+        })
+        self._pixel_aspect = float(x_density) / float(y_density)
+
+    @staticmethod
+    def _unpack_header_string(file, length):
+        """ Read the next characters as a string. """
+        start_pos = file.tell()
+        # noinspection PyBroadException
+        try:
+            header = struct.unpack(f'>{length}s', file.read(length))[0]
+            header = header.decode('utf-8')
+        except Exception:
+            header = None
+        finally:
+            file.seek(start_pos, os.SEEK_SET)
+        return header
 
     def _read_exif(self, file):
-        file.seek(2, os.SEEK_CUR)
+        file.seek(6, os.SEEK_CUR)
         tiff_header_offset = file.tell()
 
         try:

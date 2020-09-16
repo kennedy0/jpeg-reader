@@ -50,10 +50,10 @@ DHP = 0xffde  # Define hierarchical progression
 EXP = 0xffdf  # Expand reference component(s)
 
 # Reserved for application segments
-APP0 = 0xffe0  # JFIF
-APP1 = 0xffe1  # EXIF
-APP2 = 0xffe2  # EXIF
-APP3 = 0xffe3
+APP0 = 0xffe0  # JFIF, JFXX
+APP1 = 0xffe1  # EXIF, XMP
+APP2 = 0xffe2  # EXIF, ICC
+APP3 = 0xffe3  #
 APP4 = 0xffe4
 APP5 = 0xffe5
 APP6 = 0xffe6
@@ -66,6 +66,9 @@ APPC = 0xffec
 APPD = 0xffed
 APPE = 0xffee
 APPF = 0xffef
+
+APP_MARKERS = (APP0, APP1, APP2, APP3, APP4, APP5, APP6, APP7, APP8, APP9, APPA, APPB, APPC, APPD, APPE, APPF)
+
 
 # Reserved for JPEG extensions
 JPG0 = 0xfff0
