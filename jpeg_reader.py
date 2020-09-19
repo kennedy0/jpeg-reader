@@ -7,6 +7,7 @@ from typing import BinaryIO
 
 from utils import constants
 from utils import exif
+from utils import jfif
 from utils import segment_markers
 
 
@@ -141,7 +142,7 @@ class JpegFile:
 
         self._metadata.update({
             'JFIFVersion': jfif_version,
-            'DensityUnits': density_units,
+            'DensityUnits': jfif.density_unit_map.get(density_units, density_units),
             'Xdensity': x_density,
             'Ydensity': y_density
         })
@@ -311,4 +312,3 @@ if __name__ == "__main__":
                     print_file_info(fp)
                 except Exception:
                     print(traceback.format_exc())
-                    print("\n")
