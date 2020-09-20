@@ -1,6 +1,9 @@
 # jpeg reader
+![python3.8](https://img.shields.io/badge/python-3.8-blue.svg)
 
 Pure python jpeg reader.
+
+Developed with Python 3.8, but should be compatible with Python 3.6+.
 
 ### What this module is
 This will get resolution, pixel aspect ratio, and some metadata from most JPEG files.
@@ -36,8 +39,7 @@ jpeg_reader.py can also be used from the command line to print information about
 
 `jpeg_reader.py C:\path\to\images`
 
-Handy links:
-============
+## Handy links:
 
 These are links that I found useful for reference.
 
