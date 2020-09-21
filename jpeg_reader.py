@@ -3,12 +3,16 @@ import pprint
 import struct
 import sys
 import traceback
+from collections import namedtuple
 from typing import BinaryIO
 
 from utils import constants
 from utils import exif
 from utils import jfif
 from utils import segment_markers
+
+
+Segment = namedtuple('Segment', "marker offset")
 
 
 class ReadSegment:
@@ -22,17 +26,32 @@ class ReadSegment:
         MM = Segment marker type
         LLLL = Segment length, not including first 2 bytes of identifier and type
     """
-    def __init__(self, file: BinaryIO):
+    def __init__(self, file: BinaryIO, segment_start):
         self.file = file
+        self.segment_start = segment_start
         self.segment_end = None
 
     def __enter__(self):
+        self.go_to_segment_start()
+        self.file.seek(2, os.SEEK_CUR)  # Skip segment marker
         segment_length = struct.unpack('>H', self.file.read(2))[0]
         self.segment_end = self.file.tell() + segment_length - 2
-        self.file.seek(-2, os.SEEK_CUR)
+        self.go_to_segment_start()
+        return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        self.go_to_segment_end()
+
+    def go_to_segment_start(self):
+        self.file.seek(self.segment_start, os.SEEK_SET)
+
+    def go_to_segment_end(self):
         self.file.seek(self.segment_end, os.SEEK_SET)
+
+    def go_to_segment_data(self):
+        """ Go to segment start; skip past segment marker and length bytes. """
+        self.go_to_segment_start()
+        self.file.seek(4, os.SEEK_CUR)
 
 
 class JpegFile:
@@ -40,6 +59,7 @@ class JpegFile:
         self._file_path = file_path
         self._resolution = (None, None)
         self._pixel_aspect = None
+        self._segments = list()
         self._metadata = dict()
 
         self._file = None
@@ -54,31 +74,36 @@ class JpegFile:
         return self._pixel_aspect
 
     @property
+    def segments(self):
+        return self._segments
+
+    @property
     def metadata(self):
         return self._metadata
 
     def _read_file(self):
         with open(self._file_path, 'rb') as f:
+            # Validate that the file we're reading is a JPEG file
             self._file = f
-            soi = self._find_next_marker()
-            assert soi == segment_markers.SOI, f"File is not a JPEG file: {self._file_path}"
+            marker = self._find_next_marker()
+            assert marker == segment_markers.SOI.marker, f"File is not a JPEG file: {self._file_path}"
 
-            while True:
+            # Build list of segment markers
+            while marker != segment_markers.EOI.marker:
                 marker = self._find_next_marker()
-                if marker == segment_markers.EOI:
-                    # Stop reading file if we are at End of Image
-                    return
 
-                if marker in segment_markers.SOF_MARKERS:
+            # Read data from known segments
+            for segment in self.segments:  # type: Segment
+                marker = segment.marker  # type:segment_markers.SegmentMarker
+                print(marker.code, marker.description, segment.offset)
+                if segment.marker in segment_markers.SOF_MARKERS:
                     # Get resolution from any SOF marker.
-                    self._get_resolution()
+                    self._get_resolution(segment.offset)
                     continue
                 elif marker in segment_markers.APP_MARKERS:
                     # APP Markers can contain pixel aspect ratio and other useful metadata.
-                    self._read_app_segment()
+                    self._read_app_segment(segment.offset)
                     continue
-                else:
-                    self._skip_segment()
 
     def _find_next_marker(self):
         """ Find and return the next marker (2 bytes). """
@@ -93,24 +118,29 @@ class JpegFile:
 
         # Read marker
         marker = b1 << 8 | b2
+        marker_offset = self._file.tell() - 2
+        self._record_segment(marker, marker_offset)
         return marker
 
-    def _skip_segment(self):
-        """ Skip an unimplemented segment. """
-        with ReadSegment(self._file):
-            pass
+    def _record_segment(self, marker, offset):
+        """ Add segment marker and location to list of segments. """
+        segment_marker = segment_markers.get_segment_marker(marker)
+        if segment_marker is not None:
+            self._segments.append(Segment(segment_marker, offset))
 
-    def _get_resolution(self):
+    def _get_resolution(self, offset):
         """ Get the resolution from a SOF frame header segment. """
-        with ReadSegment(self._file):
-            self._file.seek(3, os.SEEK_CUR)
-            height, width = struct.unpack('>2H', self._file.read(4))
-            self._resolution = (width, height)
+        with ReadSegment(self._file, segment_start=offset) as seg:
+            seg.go_to_segment_data()
+            self._file.seek(1, os.SEEK_CUR)  # Skip sample precision
+            y = struct.unpack('>H', self._file.read(2))[0]  # Number of lines
+            x = struct.unpack('>H', self._file.read(2))[0]  # Number of samples per line
+            self._resolution = (x, y)
 
-    def _read_app_segment(self):
+    def _read_app_segment(self, offset):
         """ Read an APP segment and handle any known segment types. """
-        with ReadSegment(self._file):
-            self._file.seek(2, os.SEEK_CUR)  # Skip segment length
+        with ReadSegment(self._file, segment_start=offset) as seg:
+            seg.go_to_segment_data()
             if self._unpack_header_string(4) in [constants.JFIF_HEADER, constants.JFXX_HEADER]:
                 self._read_jfif_segment()
                 return
