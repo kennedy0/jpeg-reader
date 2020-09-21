@@ -1,7 +1,11 @@
-from collections import namedtuple
+class SegmentMarker:
+    def __init__(self, marker, code, description):
+        self.marker = marker
+        self.code = code
+        self.description = description
 
-
-SegmentMarker = namedtuple("SegmentMarker", "marker code description")
+    def __str__(self):
+        return f"{self.code} ({self.description})"
 
 
 # Start of Frame markers, non-differential, Huffman coding

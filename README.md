@@ -18,24 +18,31 @@ That's a rabbit hole I don't care to go down.
 jpeg_reader can be imported and used as a module to extract information from a JPEG file.
 
 ```python
+# Example: Print file info
 from jpeg_reader import JpegFile
 
 
-# Get file info from 'test_image.jpg'
 jf = JpegFile("test_image.jpg")
-
-# Print file info
 print(jf.resolution)
 print(jf.pixel_aspect)
 for key, value in jf.metadata.items():
     print(key, value)
 ```
 
-jpeg_reader.py can also be used from the command line to print information about a file
+```python
+# Example: Read 
+from jpeg_reader import JpegFile
+from jpeg_reader import ReadSegment
+from jpeg_reader import segment_markers
+
+
+jf = JpegFile("test_image.jpg")
+with open("test_image.jpg", 'rb') as f:
+```
+
+jpeg_reader.py can also be used from the command line to print information about an individual file, or a directory containing multiple images.
 
 `jpeg_reader.py test_image.jpg`
-
-... or from a folder of jpeg files.
 
 `jpeg_reader.py C:\path\to\images`
 
