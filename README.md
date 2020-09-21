@@ -30,14 +30,24 @@ for key, value in jf.metadata.items():
 ```
 
 ```python
-# Example: Read 
+# Example: Read SOS (Start of Scan) data
 from jpeg_reader import JpegFile
 from jpeg_reader import ReadSegment
 from jpeg_reader import segment_markers
 
 
 jf = JpegFile("test_image.jpg")
+for segment in jf.segments:
+    marker = segment.marker
+    if segment.marker == segment_markers.SOS:
+        sos_segment = segment
+        break
+
 with open("test_image.jpg", 'rb') as f:
+    with ReadSegment(file=f, segment_start=sos_segment.offset) as seg:
+        seg.go_to_segment_data()
+        # Do whatever you need to here
+        pass
 ```
 
 jpeg_reader.py can also be used from the command line to print information about an individual file, or a directory containing multiple images.
