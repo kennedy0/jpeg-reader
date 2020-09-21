@@ -95,7 +95,6 @@ class JpegFile:
             # Read data from known segments
             for segment in self.segments:  # type: Segment
                 marker = segment.marker  # type:segment_markers.SegmentMarker
-                print(marker.code, marker.description, segment.offset)
                 if segment.marker in segment_markers.SOF_MARKERS:
                     # Get resolution from any SOF marker.
                     self._get_resolution(segment.offset)
