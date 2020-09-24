@@ -277,59 +277,52 @@ class JpegFile:
             tag_name = tag_names.get(tag_id)
             tag_type = exif.tag_types.get(type_id)
             total_bytes = exif.get_byte_count(tag_type, count)
+
+            # Treat strings as having a count of 1.
             if tag_type == 's':
                 tag_type = f'{count}s'
+                count = 1
 
+            # Dynamically assign ifd unpacking function
             if tag_type is not None:
-                def _unpack_idf():
+                # Standard ifd value unpacking
+                def _unpack_ifd():
                     string = self._file.read(total_bytes)
-                    return self._unpack_standard_idf_value(string, endian, tag_type)
+                    if count == 1:
+                        return exif.unpack_standard_ifd_value(string, endian, tag_type)
+                    else:
+                        values = []
+                        step = int(total_bytes / count)
+                        for c in range(count):
+                            sub_string = string[c*step:c*step+step]
+                            values.append(exif.unpack_standard_ifd_value(sub_string, endian, tag_type))
+                        return values
             else:
-                def _unpack_idf():
+                # Undefined ifd values are interpreted uniquely for each field
+                def _unpack_ifd():
                     string = self._file.read(total_bytes)
-                    return exif.unpack_undefined_ifd_value()
+                    return exif.unpack_undefined_ifd_value(tag_id, string, count)
 
+            # Read ifd value
             if total_bytes <= 4:
                 # When total bytes is 4 or less, next 4 bytes stores the value.
-                value = _unpack_idf()
+                value = _unpack_ifd()
                 self._file.seek(4 - total_bytes, os.SEEK_CUR)  # Handle padding
             else:
                 # When total bytes is greater than 4, the next 4 bytes stores the offset to the value.
                 value_offset = struct.unpack(f'{endian}I', self._file.read(4))[0]
                 current_offset = self._file.tell()
                 self._file.seek(tiff_header_offset + value_offset, os.SEEK_SET)
-                value = _unpack_idf()
+                value = _unpack_ifd()
                 self._file.seek(current_offset, os.SEEK_SET)
 
             if tag_name is None or value is None:
                 # If for some reason we've encountered a non-standard tag with missing info, skip it.
                 continue
 
-
-
             ifd_data.update({tag_name: value})
 
         return ifd_data
-
-    @staticmethod
-    def _unpack_standard_idf_value(string: bytes, endian, tag_type):
-        """ Unpacks a value from an idf string, as long as its value is not UNDEFINED. """
-        value = struct.unpack(f'{endian}{tag_type}', string)
-
-        # Format values for metadata
-        if value is None:
-            pass
-        elif len(value) == 1:
-            value = value[0]
-        elif len(value) == 2:
-            # Rational numbers
-            value = value[0] / value[1]
-        if tag_type.endswith('s'):
-            # Strings
-            value = value[:-1]  # Remove null byte
-            value = value.decode('utf-8')
-
-        return value
 
 
 def print_file_info(file_path):

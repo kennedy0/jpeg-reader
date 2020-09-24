@@ -1,3 +1,6 @@
+import struct
+
+
 tiff_tag_names = {
     0x0100: "ImageWidth",
     0x0101: "ImageLength",
@@ -154,5 +157,71 @@ def get_byte_count(tag_type, count):
     return tag_bytes * count
 
 
-def unpack_undefined_ifd_value():
-    pass
+def unpack_standard_ifd_value(string: bytes, endian, tag_type):
+    """ Unpacks a value from an ifd string, as long as its value is not UNDEFINED. """
+    value = struct.unpack(f'{endian}{tag_type}', string)
+
+    # Format values for metadata
+    if value is None:
+        pass
+    elif len(value) == 1:
+        value = value[0]
+    elif len(value) == 2:
+        # Rational numbers
+        value = value[0] / value[1]
+    if tag_type.endswith('s'):
+        # Strings
+        null = struct.pack('B', 0x00)
+        value = value.strip(null)  # Remove null byte
+        value = value.decode('utf-8').strip()
+
+    return value
+
+
+def unpack_undefined_ifd_value(tag_id, string, count):
+    """ Each UNDEFINED ifd type has its own unique data structure.
+    See Exif 2.2 specs starting on p.17 for a complete list of UNDEFINED data types and how to read them.
+    ToDo: This can be greatly expanded upon should the need arise.
+    """
+    unpack_fn_dispatch_table = {
+        0x9000: unpack_exif_version,  # ExifVersion
+        0xa000: unpack_flashpix_version,  # FlashpixVersion
+        0x9101: unpack_components_configuration,  # ComponentsConfiguration
+        0x927c: unpack_maker_note,  # MakerNote
+    }
+
+    def _unpack_unknown(_string, _count):
+        return None
+
+    unpack_fn = unpack_fn_dispatch_table.get(tag_id, _unpack_unknown)
+    value = unpack_fn(string, count)
+    return value
+
+
+def unpack_exif_version(string, count):
+    value = struct.unpack(f'>{count}s', string)[0]
+    value = value.decode('utf-8')
+    return value
+
+
+def unpack_flashpix_version(string, count):
+    value = struct.unpack(f'>{count}s', string)[0]
+    value = value.decode('utf-8')
+    return value
+
+
+def unpack_components_configuration(string, count):
+    value = struct.unpack(f'>{count}B', string)
+    if value == (4, 5, 6, 0):
+        value = "RGB"
+    elif value == (1, 2, 3, 0):
+        value = "YCbCr"
+    return value
+
+
+def unpack_maker_note(string, count):
+    value = struct.unpack(f'>{count}s', string)[0]
+    value = value.decode('utf-8')
+    return value
+
+

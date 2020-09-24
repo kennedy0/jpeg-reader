@@ -75,3 +75,4 @@ JFIF:
 EXIF:
 * Specs: https://www.exif.org/Exif2-2.PDF
 * https://www.media.mit.edu/pia/Research/deepview/exif.html
+* Sample files: https://github.com/ianare/exif-samples/tree/master/jpg
