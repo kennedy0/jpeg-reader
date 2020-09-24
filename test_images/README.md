@@ -1,3 +1,6 @@
+### exif sample images
+This repo has a lot of good sample images:  https://github.com/ianare/exif-samples/tree/master/jpg
+
 ### img_natron.jpg
 Natron saved this 3x3 image very oddly and distorted the resolution.
 However, it is the only software that I was able to get a pixel aspect ratio of 2.0.
