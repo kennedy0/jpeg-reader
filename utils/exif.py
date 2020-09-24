@@ -152,3 +152,7 @@ def get_byte_count(tag_type, count):
     else:
         raise RuntimeError(f"Unsupported tag type: {tag_type}")
     return tag_bytes * count
+
+
+def unpack_undefined_ifd_value():
+    pass
